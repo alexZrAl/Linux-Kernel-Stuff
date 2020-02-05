@@ -1,0 +1,107 @@
+diff -rcNP -x 'signing_key.*' -x x509.genkey -x fixdep -x objtool -x inat-tables.c linux-4.19.68-original/arch/x86/entry/syscalls/syscall_64.tbl linux-4.19.68-hw2-done/arch/x86/entry/syscalls/syscall_64.tbl
+*** linux-4.19.68-original/arch/x86/entry/syscalls/syscall_64.tbl	2019-08-25 04:48:06.000000000 -0400
+--- linux-4.19.68-hw2-done/arch/x86/entry/syscalls/syscall_64.tbl	2019-10-16 23:21:03.698187905 -0400
+***************
+*** 343,348 ****
+--- 343,351 ----
+  332	common	statx			__x64_sys_statx
+  333	common	io_pgetevents		__x64_sys_io_pgetevents
+  334	common	rseq			__x64_sys_rseq
++ # Kernet hw 2
++ 335     common  read_lines_array        __x64_sys_read_lines_array
++ 
+  
+  #
+  # x32-specific system call numbers start at 512 to avoid cache impact
+diff -rcNP -x 'signing_key.*' -x x509.genkey -x fixdep -x objtool -x inat-tables.c linux-4.19.68-original/Makefile linux-4.19.68-hw2-done/Makefile
+*** linux-4.19.68-original/Makefile	2019-08-25 04:48:06.000000000 -0400
+--- linux-4.19.68-hw2-done/Makefile	2019-10-16 23:25:11.325939931 -0400
+***************
+*** 2,8 ****
+  VERSION = 4
+  PATCHLEVEL = 19
+  SUBLEVEL = 68
+! EXTRAVERSION =
+  NAME = "People's Front"
+  
+  # *DOCUMENTATION*
+--- 2,8 ----
+  VERSION = 4
+  PATCHLEVEL = 19
+  SUBLEVEL = 68
+! EXTRAVERSION = -zhur3-hw2
+  NAME = "People's Front"
+  
+  # *DOCUMENTATION*
+diff -rcNP -x 'signing_key.*' -x x509.genkey -x fixdep -x objtool -x inat-tables.c linux-4.19.68-original/net/socket.c linux-4.19.68-hw2-done/net/socket.c
+*** linux-4.19.68-original/net/socket.c	2019-08-25 04:48:06.000000000 -0400
+--- linux-4.19.68-hw2-done/net/socket.c	2019-10-16 23:21:34.493577921 -0400
+***************
+*** 3442,3444 ****
+--- 3442,3507 ----
+  	}
+  }
+  EXPORT_SYMBOL(kernel_sock_ip_overhead);
++ 
++ 
++ /**
++  * Reads skbuff content associated with a given socket
++  * then puts the values into a passed-in pointer.
++  * Messages are separated by '\0'
++  *
++  * @sk: socket fd
++  * @flags: flags used for recv()
++  * @packs: 2d-array allocated by user, this is to be populated
++  * @num: current size of packs
++  *
++  */
++ int __kernet_recv(int fd, int flags, char** packs, int* num) {
++     int offset = *num;
++     int i, last;
++     int rc = 0;
++ 
++     rc = __sys_recvfrom(fd, packs[offset], 255, flags, NULL, NULL);
++     printk(KERN_INFO "rcvd size: %d, content:  %s", rc, packs[offset]);
++ 
++     if (rc < 0) {
++         printk(KERN_INFO "__sys_recvfrom(): Resource temporarily unavailable. Try again later.");
++         return -EAGAIN;    
++     }
++ 
++ 
++     // separate connecting packets by \0, in case caller sleep()s
++     check_:
++     for (i=0; i<rc; i++) {
++         if (packs[offset][i] == '\0') {
++             printk(KERN_INFO "found terminator at %d", i+1);
++             if (i < rc-1 && packs[offset][i+1] != '\0') {
++                 // case: "packeta\0packetb\0..."
++                 printk(KERN_INFO "separating...");
++                 last = i+1;
++                 while (last < rc-1) {
++                     if (packs[offset][last] == '\0' && packs[offset][last+1] == '\0') {
++                         break;
++                     }
++                     last++;
++                 }
++                 copy_to_user(packs[offset+1], packs[offset]+i+1, last-i);
++ 
++                 offset++;
++                 goto check_;
++             }else{
++                 // if "\0\0" then there must be no more new packets
++                 printk(KERN_INFO "done...");
++                 goto done_;
++             }
++         }
++     }    
++ 
++     done_:
++     *num = offset+1;
++     return rc;    
++ }
++ 
++ SYSCALL_DEFINE4(read_lines_array, int, fd, int, flags, char**, packs, int*, num) {
++     return __kernet_recv(fd, flags, packs, num);
++ }
++ 
